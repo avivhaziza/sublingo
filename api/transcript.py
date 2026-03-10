@@ -1,51 +1,34 @@
 from http.server import BaseHTTPRequestHandler
 import json
 import os
-import tempfile
-import yt_dlp
+from youtube_transcript_api import YouTubeTranscriptApi
 import anthropic
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 
 def fetch_captions(video_id: str) -> list[dict]:
-    url = f"https://www.youtube.com/watch?v={video_id}"
-    with tempfile.TemporaryDirectory() as tmpdir:
-        output_path = os.path.join(tmpdir, "cap")
-        ydl_opts = {
-            "writeautomaticsub": True,
-            "writesubtitles": True,
-            "subtitleslangs": ["en"],
-            "subtitlesformat": "json3",
-            "skip_download": True,
-            "outtmpl": output_path,
-            "quiet": True,
-            "no_warnings": True,
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+    api = YouTubeTranscriptApi()
+    try:
+        transcript = api.fetch(video_id, languages=["en"])
+    except Exception:
+        transcript = api.fetch(video_id)
 
-        for fname in os.listdir(tmpdir):
-            if fname.endswith(".json3"):
-                with open(os.path.join(tmpdir, fname), encoding="utf-8") as f:
-                    data = json.load(f)
+    segments = []
+    for item in transcript:
+        text = item.text.replace("\n", " ").strip()
+        if not text:
+            continue
+        segments.append({
+            "offset": int(item.start * 1000),
+            "duration": int(item.duration * 1000),
+            "text": text,
+        })
 
-                segments = []
-                for event in data.get("events", []):
-                    segs = event.get("segs")
-                    if not segs or "tStartMs" not in event:
-                        continue
-                    text = "".join(s.get("utf8", "") for s in segs).replace("\n", " ").strip()
-                    if not text:
-                        continue
-                    segments.append({
-                        "offset": event["tStartMs"],
-                        "duration": event.get("dDurationMs", 2000),
-                        "text": text,
-                    })
-                return segments
+    if not segments:
+        raise ValueError("לא נמצאו כתוביות לסרטון זה")
 
-    raise ValueError("לא נמצאו כתוביות לסרטון זה")
+    return segments
 
 
 def translate_segments(segments: list[dict], target_lang: str = "עברית") -> list[dict]:
@@ -54,7 +37,7 @@ def translate_segments(segments: list[dict], target_lang: str = "עברית") ->
     result = []
 
     for i in range(0, len(segments), batch_size):
-        batch = segments[i : i + batch_size]
+        batch = segments[i: i + batch_size]
         batch_text = "\n".join(f"[{idx}] {s['text']}" for idx, s in enumerate(batch))
 
         msg = client.messages.create(

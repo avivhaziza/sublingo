@@ -1,0 +1,8 @@
+{
+  "functions": {
+    "api/transcript.py": {
+      "runtime": "python3.12",
+      "maxDuration": 60
+    }
+  }
+}

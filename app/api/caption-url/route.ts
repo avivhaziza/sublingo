@@ -33,5 +33,12 @@ export async function GET(req: NextRequest) {
     tracks.find((t) => t.languageCode.startsWith("en")) ||
     tracks[0];
 
-  return NextResponse.json({ captionUrl: track.baseUrl + "&fmt=json3" });
+  // Return both signed URL and a simple unsigned URL as fallback
+  const simpleUrl = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${track.languageCode}&fmt=json3`;
+
+  return NextResponse.json({
+    captionUrl: track.baseUrl + "&fmt=json3",
+    captionUrlSimple: simpleUrl,
+    langCode: track.languageCode,
+  });
 }

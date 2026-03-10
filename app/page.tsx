@@ -33,9 +33,21 @@ export default function Home() {
       if (!urlRes.ok) throw new Error(urlData.error || "לא נמצאו כתוביות");
 
       // Step 2: browser fetches captions directly from YouTube (residential IP + cookies)
-      const captionRes = await fetch(urlData.captionUrl, { credentials: "include" });
-      if (!captionRes.ok) throw new Error("שגיאה בטעינת הכתוביות");
-      const captionData = await captionRes.json();
+      // Try simple unsigned URL first, then signed URL as fallback
+      const tryFetch = async (url: string, withCredentials: boolean) => {
+        const res = await fetch(url, { credentials: withCredentials ? "include" : "omit" });
+        if (!res.ok) return null;
+        const text = await res.text();
+        if (text.trim().startsWith("<")) return null; // got HTML, not JSON
+        return JSON.parse(text);
+      };
+
+      const captionData =
+        await tryFetch(urlData.captionUrlSimple, false) ||
+        await tryFetch(urlData.captionUrl, false) ||
+        await tryFetch(urlData.captionUrl, true);
+
+      if (!captionData) throw new Error("לא הצלחנו לטעון את הכתוביות מ-YouTube");
 
       const rawSegments: TranscriptSegment[] = (captionData.events ?? [])
         .filter((e: { segs?: unknown; tStartMs?: number }) => e.segs && e.tStartMs !== undefined)

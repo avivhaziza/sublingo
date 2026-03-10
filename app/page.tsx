@@ -6,7 +6,7 @@ import UrlInput from "@/components/UrlInput";
 import VideoPlayer from "@/components/VideoPlayer";
 import SubtitlePanel from "@/components/SubtitlePanel";
 import LoadingState from "@/components/LoadingState";
-import { TranscriptSegment } from "@/app/api/transcript/route";
+import { TranscriptSegment } from "@/app/api/translate/route";
 
 export default function Home() {
   const [videoId, setVideoId] = useState<string | null>(null);
@@ -27,14 +27,36 @@ export default function Home() {
     setVideoId(vid);
 
     try {
-      const res = await fetch("/api/transcript", {
+      // Step 1: server gets the caption URL (just page parsing, no blocked calls)
+      const urlRes = await fetch(`/api/caption-url?videoId=${vid}`);
+      const urlData = await urlRes.json();
+      if (!urlRes.ok) throw new Error(urlData.error || "לא נמצאו כתוביות");
+
+      // Step 2: browser fetches captions directly from YouTube (residential IP + cookies)
+      const captionRes = await fetch(urlData.captionUrl, { credentials: "include" });
+      if (!captionRes.ok) throw new Error("שגיאה בטעינת הכתוביות");
+      const captionData = await captionRes.json();
+
+      const rawSegments: TranscriptSegment[] = (captionData.events ?? [])
+        .filter((e: { segs?: unknown; tStartMs?: number }) => e.segs && e.tStartMs !== undefined)
+        .map((e: { tStartMs: number; dDurationMs?: number; segs: Array<{ utf8?: string }> }) => ({
+          offset: e.tStartMs,
+          duration: e.dDurationMs ?? 2000,
+          text: e.segs.map((s) => s.utf8 ?? "").join("").replace(/\n/g, " ").trim(),
+        }))
+        .filter((s: TranscriptSegment) => s.text);
+
+      if (!rawSegments.length) throw new Error("הכתוביות ריקות");
+
+      // Step 3: server translates with Claude
+      const transRes = await fetch("/api/translate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoId: vid, targetLang: "עברית" }),
+        body: JSON.stringify({ segments: rawSegments, targetLang: "עברית" }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "שגיאה בטעינה");
-      setSegments(data.segments);
+      const transData = await transRes.json();
+      if (!transRes.ok) throw new Error(transData.error || "שגיאה בתרגום");
+      setSegments(transData.segments);
     } catch (err) {
       setError(err instanceof Error ? err.message : "שגיאה לא ידועה");
       setVideoId(null);
